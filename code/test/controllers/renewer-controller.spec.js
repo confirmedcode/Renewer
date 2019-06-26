@@ -2,7 +2,7 @@ const should = require("chai").should();
 const sinon = require("sinon");
 const Client = require("../client.js");
 const Constants = require('../constants.js');
-const { reset, resetWithFailedSubscription, changeDate, resetDate} = require("../utilities.js");
+const { reset, resetWithIosStripeUser, resetWithFailedSubscription, changeDate, resetDate} = require("../utilities.js");
 
 const { User } = require("shared/models");
 const { Subscription } = require("shared/models");
@@ -19,7 +19,7 @@ describe("Renewer Controller", () => {
         Email.sendCancelSubscription.restore();
         resetDate();
       });
-      it("should succeed and send one cancellation email", (done) => {
+      it("should succeed and send no cancellation email because it's still 'active'", (done) => {
         const spyEmailSendCancelSubscription = sinon.spy(Email, 'sendCancelSubscription');
         changeDate("February 1, 2018 11:00:00");
         Client.getUrl("/renew")
@@ -32,8 +32,8 @@ describe("Renewer Controller", () => {
             return Subscription.getWithReceiptId(Constants.IOS_RECEIPT_VALID_ID);
           })
           .then(subscription => {
-            // cancelled, so should send cancellation email
-            sinon.assert.calledOnce(spyEmailSendCancelSubscription);
+            // cancelled but still active on Feb 1st, so don't send cancellation email
+            sinon.assert.notCalled(spyEmailSendCancelSubscription);
             // Should renew expiration 02/02/18 to 04/02/18
             subscription.receiptId.should.equal(Constants.IOS_RECEIPT_VALID_ID);
             subscription.userId.should.equal(Constants.NEW_USER_ID);
@@ -267,6 +267,44 @@ describe("Renewer Controller", () => {
             subscription.renewEnabled.should.equal(false);
             subscription.expirationIntentCancelled.should.equal(true);
             subscription.sentCancellationEmail.should.equal(true);
+            done();
+          })
+          .catch(error => {
+            done(error);
+          });
+      });
+    });
+    
+    describe("renew 1 user that has both iOS and Stripe sub - iOS active, Stripe expired ", () => {
+      after(function() {
+        Email.sendCancelSubscription.restore();
+        resetDate();
+      });
+      it("should not send any cancellation emails because iOS is still active", (done) => {
+        const spyEmailSendCancelSubscription = sinon.spy(Email, 'sendCancelSubscription');
+        changeDate("February 1, 2018 11:00:00");
+        resetWithIosStripeUser()
+          .then(response => {
+            return Client.getUrl("/renew-user", {
+              id: Constants.EXISTING_USER_ID
+            })
+          })
+          .then(response => {
+            response.status.should.equal(200);
+            response.body.message.should.contain(Constants.EXISTING_USER_ID);
+            return delay(4000);
+          })
+          .then(response => {
+            sinon.assert.notCalled(spyEmailSendCancelSubscription);
+            return Client.getUrl("/renew-user", {
+              id: Constants.EXISTING_USER_ID
+            });
+          })
+          .then(subscription => {
+            return delay(4000);
+          })
+          .then(subscription => {
+            sinon.assert.notCalled(spyEmailSendCancelSubscription);
             done();
           })
           .catch(error => {

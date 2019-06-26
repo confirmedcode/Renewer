@@ -52,6 +52,24 @@ module.exports = {
       });
   },
 
+  resetWithIosStripeUser: () => {
+    Client.resetAgent();
+    RedisClient.flushall();
+    return module.exports.resetDatabase()
+      .then(result => {
+        return module.exports.addCertificates();
+      })
+      .then(result => {
+        return module.exports.addUser();
+      })
+      .then(result => {
+        return module.exports.addSubscription();
+      })
+      .then(result => {
+        return module.exports.addIosReceiptWithSameUser();
+      });
+  },
+
   resetWithFailedSubscription: () => {
     Client.resetAgent();
     RedisClient.flushall();
@@ -156,6 +174,11 @@ module.exports = {
   
   addIosReceipt: () => {
     var sql = fs.readFileSync(path.join(__dirname, "test-files", "add-ios-receipt.sql"), "utf-8");
+    return Database.query(sql);
+  },
+  
+  addIosReceiptWithSameUser: () => {
+    var sql = fs.readFileSync(path.join(__dirname, "test-files", "add-ios-receipt-to-stripe-user.sql"), "utf-8");
     return Database.query(sql);
   },
   
