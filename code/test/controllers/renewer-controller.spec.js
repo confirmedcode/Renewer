@@ -1,10 +1,12 @@
 const should = require("chai").should();
+const sinon = require("sinon");
 const Client = require("../client.js");
 const Constants = require('../constants.js');
 const { reset, resetWithFailedSubscription, changeDate, resetDate} = require("../utilities.js");
 
 const { User } = require("shared/models");
 const { Subscription } = require("shared/models");
+const { Email } = require("shared/utilities");
 
 describe("Renewer Controller", () => {
   
@@ -13,8 +15,12 @@ describe("Renewer Controller", () => {
   describe("GET /renew", () => {
     
     describe("renew 1 iOS Subscription", () => {
-      after(resetDate);
-      it("should succeed", (done) => {
+      after(function() {
+        Email.sendCancelSubscription.restore();
+        resetDate();
+      });
+      it("should succeed and send one cancellation email", (done) => {
+        const spyEmailSendCancelSubscription = sinon.spy(Email, 'sendCancelSubscription');
         changeDate("February 1, 2018 11:00:00");
         Client.getUrl("/renew")
           .then(response => {
@@ -26,6 +32,8 @@ describe("Renewer Controller", () => {
             return Subscription.getWithReceiptId(Constants.IOS_RECEIPT_VALID_ID);
           })
           .then(subscription => {
+            // cancelled, so should send cancellation email
+            sinon.assert.calledOnce(spyEmailSendCancelSubscription);
             // Should renew expiration 02/02/18 to 04/02/18
             subscription.receiptId.should.equal(Constants.IOS_RECEIPT_VALID_ID);
             subscription.userId.should.equal(Constants.NEW_USER_ID);
@@ -126,7 +134,11 @@ describe("Renewer Controller", () => {
   describe("GET /renew-all", () => {
     
     describe("renew both even though they're out of range", () => {
-      it("should succeed", (done) => {
+      after(function () {
+        Email.sendCancelSubscription.restore();
+      });
+      it("should succeed and send two cancellation emails", (done) => {
+        const spyEmailSendCancelSubscription = sinon.spy(Email, 'sendCancelSubscription');
         Client.getUrl("/renew-all")
           .then(response => {
             response.status.should.equal(200);
@@ -137,6 +149,8 @@ describe("Renewer Controller", () => {
             return Subscription.getWithReceiptId(Constants.IOS_RECEIPT_VALID_ID);
           })
           .then(subscription => {
+            // both Stripe and iOS sub are cancelled, so this should be called twice
+            sinon.assert.calledTwice(spyEmailSendCancelSubscription);
             // Should renew expiration 02/02/18 to 04/02/18
             subscription.receiptId.should.equal(Constants.IOS_RECEIPT_VALID_ID);
             subscription.userId.should.equal(Constants.NEW_USER_ID);
@@ -161,9 +175,13 @@ describe("Renewer Controller", () => {
   describe("GET /renew-user", () => {
     
     describe("renew 1 iOS user", () => {
-      it("should succeed", (done) => {
+      after(function () {
+        Email.sendCancelSubscription.restore();
+      });
+      it("should succeed and send cancellation email the first time, but not the second time", (done) => {
+        const spyEmailSendCancelSubscription = sinon.spy(Email, 'sendCancelSubscription');
         Client.getUrl("/renew-user", {
-          id: Constants.NEW_USER_ID
+            id: Constants.NEW_USER_ID
           })
           .then(response => {
             response.status.should.equal(200);
@@ -181,10 +199,74 @@ describe("Renewer Controller", () => {
             return Subscription.getWithReceiptId(Constants.EXISTING_USER_STRIPE_RECEIPT_ID);
           })
           .then(subscription => {
+            sinon.assert.calledOnce(spyEmailSendCancelSubscription);
+            Email.sendCancelSubscription.resetHistory();
             // stripe should not renew
             subscription.receiptId.should.equal(Constants.EXISTING_USER_STRIPE_RECEIPT_ID);
             subscription.userId.should.equal(Constants.EXISTING_USER_ID);
             subscription.expirationDateMs.should.equal(Constants.EXISTING_USER_SUBSCRIPTION_OLD_EXPIRE_MILLIS);
+            return Client.getUrl("/renew-user", {
+              id: Constants.NEW_USER_ID
+            });
+          })
+          .then(subscription => {
+            return delay(2000);
+          })
+          .then(subscription => {
+            sinon.assert.notCalled(spyEmailSendCancelSubscription);
+            done();
+          })
+          .catch(error => {
+            done(error);
+          });
+      });
+    });
+    
+    describe("renew a cancelled Stripe subscription twice - not sent cancellation email yet", () => {
+      after(function () {
+        Email.sendCancelSubscription.restore();
+      });
+      it("should send email first time, set flag to email sent, then not send email second time", (done) => {
+        const spyEmailSendCancelSubscription = sinon.spy(Email, 'sendCancelSubscription');
+        reset()
+          .then(result => {
+            return Client.getUrl("/renew-user", {
+              id: Constants.EXISTING_USER_ID
+            });
+          })
+          .then(response => {
+            response.status.should.equal(200);
+            return delay(3000);
+          })
+          .then(response => {
+            return Subscription.getWithReceiptId(Constants.EXISTING_USER_STRIPE_RECEIPT_ID);
+          })
+          .then(subscription => {
+            sinon.assert.calledOnce(spyEmailSendCancelSubscription);
+            Email.sendCancelSubscription.resetHistory();
+            subscription.receiptId.should.equal(Constants.EXISTING_USER_STRIPE_RECEIPT_ID);
+            subscription.userId.should.equal(Constants.EXISTING_USER_ID);
+            subscription.renewEnabled.should.equal(false);
+            subscription.expirationIntentCancelled.should.equal(true);
+            subscription.sentCancellationEmail.should.equal(true);
+            return Client.getUrl("/renew-user", {
+              id: Constants.EXISTING_USER_ID
+            });
+          })
+          .then(response => {
+            response.status.should.equal(200);
+            return delay(3000);
+          })
+          .then(response => {
+            return Subscription.getWithReceiptId(Constants.EXISTING_USER_STRIPE_RECEIPT_ID);
+          })
+          .then(subscription => {
+            sinon.assert.notCalled(spyEmailSendCancelSubscription);
+            subscription.receiptId.should.equal(Constants.EXISTING_USER_STRIPE_RECEIPT_ID);
+            subscription.userId.should.equal(Constants.EXISTING_USER_ID);
+            subscription.renewEnabled.should.equal(false);
+            subscription.expirationIntentCancelled.should.equal(true);
+            subscription.sentCancellationEmail.should.equal(true);
             done();
           })
           .catch(error => {
