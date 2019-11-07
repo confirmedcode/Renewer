@@ -16,7 +16,7 @@
     "aws-sdk": "^2.307.0",
     "express": "^4.16.3",
     "express-winston": "^3.0.0",
-    "helmet": "^3.13.0",
+    "helmet": "^3.21.2",
     "node-schedule": "^1.2.5",
     "shared": "file:../../shared",
     "winston": "^3.0.0"
